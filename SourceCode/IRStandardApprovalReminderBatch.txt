@@ -1,0 +1,80 @@
+/**
+*  Created by:  Rashmi Nirmal
+*  Manager's Name:  KARL DRAHOVSKY
+*  Created Date:  07/07/2015 (UAT3)
+*  Description:  IR Standard Approval reminder Script
+*  BSA : Linda Claggett
+* This is a new line that I have added to test Source Tree would sync my changes to the working copy.
+*  Modified By:
+*  Modified Date:                    
+*  Modification-Reason (Note areas this affects, etc.):
+**/
+
+global class IRStandardApprovalReminderBatch implements Database.Batchable<sObject>, Database.stateful
+{
+   public String query;     
+   global IRStandardApprovalReminderBatch(String q){
+              query = q;
+   }    
+   global Database.QueryLocator start(Database.BatchableContext BC) {       
+   return Database.getQueryLocator(query);
+   }         
+       
+global void execute(Database.BatchableContext BC, List<sObject> scope){
+   Set<ID> targetobId = new Set<ID>();
+   Set<ID> prinstId = new Set<ID>();
+   for(Sobject s : scope) {
+      targetobId.add(String.valueof(s.get('Id')));                 
+   } 
+   List<ProcessInstance> piList = new List<ProcessInstance>();
+   
+    piList = [SELECT Id, TargetObjectId, CreatedBy.Name, CreatedDate, Status 
+            FROM ProcessInstance WHERE TargetObjectId in :targetobId and Status = 'Pending'];
+    
+    for(ProcessInstance prinst :piList){
+        prinstId.add(prinst.Id);
+    }
+    List<ProcessInstanceWorkitem> workitem = new List<ProcessInstanceWorkitem>();
+    workitem = [Select Id, ProcessInstanceId, ProcessInstance.TargetObjectId, ActorId, OriginalActorId, CreatedById, CreatedDate, Actor.Name from ProcessInstanceWorkitem where ProcessInstanceId in :prinstId and CreatedDate < YESTERDAY];
+    EmailTemplate emt = [select id,Name from EmailTemplate  where Name ='IRApprovalStandardReminder']; 
+    List<Messaging.SingleEmailMessage> allMails = new List<Messaging.SingleEmailMessage>();
+        for(ProcessInstanceWorkitem prstep :workitem){
+            ID targetirid = prstep.ProcessInstance.TargetObjectId;
+            Messaging.SingleEmailMessage mail = new Messaging.SingleEmailMessage();
+             String[] setCcAddresses = new String[] {'ba.team@arris.com'};
+             mail.setCcAddresses(setCcAddresses);
+             mail.setTargetObjectId(prstep.ActorId);
+             mail.setTemplateId(emt.id);
+             mail.setWhatId(targetirid);  
+             mail.setUseSignature(false);
+             mail.setSenderDisplayName('Internal Request');
+             mail.setSaveAsActivity(false); 
+            allMails.add(mail); 
+       }
+       Messaging.sendEmail(allMails);
+}
+
+global void finish(Database.BatchableContext BC) {
+        SendEmail(BC, 'Salesforce.com: Daily IR Email Reminder Standard Approval Process job completed successfully!!', '');
+    }
+    
+     public void SendEmail(Database.BatchableContext BC, String Subject, String messageBody) {
+        // Get job details
+        AsyncApexJob a = [Select Id, Status, NumberOfErrors, JobItemsProcessed,
+          TotalJobItems, CreatedBy.Email
+          from AsyncApexJob where Id =:BC.getJobId()];
+        
+        // Notify the job owner 
+        String[] toAddresses = new String[] {a.CreatedBy.Email};
+        Messaging.SingleEmailMessage mail = new Messaging.SingleEmailMessage();
+
+        mail.setToAddresses(toAddresses);
+        mail.setSubject(Subject);
+        mail.setPlainTextBody
+            ('Salesforce.com: Daily IR Email Reminder Standard Approval Process job processed ' + a.TotalJobItems +
+            ' batche(s) with '+ a.NumberOfErrors + ' failures.\n\n' + messageBody);
+        mail.setSaveAsActivity(false);
+        Messaging.sendEmail(new Messaging.SingleEmailMessage[] { mail });
+    }
+
+}

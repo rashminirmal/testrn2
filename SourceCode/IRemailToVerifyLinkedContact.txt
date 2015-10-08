@@ -1,0 +1,147 @@
+/* 
+* Created By: Swathi Uppalapati
+* Created Date : 1/13/2015
+* Description : Email Service Class for creating Contact. 
+* BSA : 
+Modified by                        Modified Date                    Modification-Reason (Note areas this affects, etc.)
+----------------                 -------------------           ---------------------------------------------------------------------        
+Rashmi Nirmal                           1/16/2015                        Correcting a wrong reference field.
+Rashmi Nirmal                          07/22/2015                        Adding notification logic, if approval coming from Recalled or Cancelled IR  
+*/   
+
+global class IRemailToVerifyLinkedContact implements Messaging.InboundEmailHandler {
+
+    global Messaging.InboundEmailResult handleInboundEmail(Messaging.inboundEmail email, Messaging.InboundEnvelope env){
+
+        Messaging.InboundEmailResult result = new Messaging.InboundEmailResult();
+        List<String> parts = new List<String>();
+        String myPlainText = '';
+        String contactID = '';   
+        String TrialID = '';
+        String delegateEmail = '';
+        try
+        {
+            myPlainText = email.plainTextBody.substring(0);
+        }
+        catch (System.StringException e)
+        {
+            myPlainText = email.plainTextBody;
+        }
+        try {
+            String fromAddress = email.fromAddress;
+            contactID = myPlainText.substringBetween('Contact ID :','\n').trim();
+            TrialID = myPlainText.substringBetween('IR # :','\n').trim();                   
+            list<Linked_Contact__c> linkedcontacts = new list<Linked_Contact__c>();
+            if(contactID != null && contactID != '' && TrialID != null && TrialID != '') {
+                try{    
+                    linkedcontacts = [select id,name,contact__c,contact__r.email, Approver__c, Approver__r.email, Approver__r.Delegate__c, Approval_Status__c, Delegate_Approver__c, Internal_Request__c from Linked_Contact__c 
+                                  where name = :contactID and Internal_Request__c != null AND
+                                  Internal_Request__r.IR__c = :TrialID 
+                                  and recordtype.name = 'Internal Request'];
+                }catch(Exception e){
+                     hException.catchX(e, 'Error getting Linked Contact'); 
+                }                   
+                if(linkedcontacts[0].Approver__r.Delegate__c != null){
+                   Contact con;  
+                   try{
+                       con = [Select Id, Name, ReportsToId, Approver_Limit__c, Delegate__c, Delegate_End_Date__c, Delegate_Start_Date__c, Delegate__r.email from Contact where Id =:linkedcontacts[0].Approver__c Limit 1];
+                   }catch(Exception e){
+                       hException.catchX(e, 'Error getting Contact Record'); 
+                   }    
+                    if(con.Delegate__c != null && con.Delegate_Start_Date__c != null && con.Delegate_Start_Date__c <= date.today()){
+                        if(con.Delegate_End_Date__c == null || con.Delegate_End_Date__c >= date.today()){
+                            delegateEmail = con.Delegate__r.email;
+                        }
+                        else if(fromAddress == con.Delegate__r.email){
+                            EmailTemplate emt;
+                            try{
+                                emt = [select id,Name from EmailTemplate  where Name ='Internal Requisition Delegation Expired'];
+                            }catch(Exception e){
+                                hException.catchX(e, 'Error getting Email Template'); 
+                            }    
+                            Messaging.SingleEmailMessage mail = new Messaging.SingleEmailMessage();
+                            mail.setTargetObjectId(con.Delegate__c);
+                            mail.setTemplateId(emt.id);
+                            mail.setWhatId(linkedcontacts[0].Id);   
+                            mail.setBccSender(false);
+                            mail.setUseSignature(false);
+                            mail.setSenderDisplayName('Internal Request');
+                            mail.setSaveAsActivity(false); 
+                            Messaging.sendEmail(new Messaging.SingleEmailMessage[] { mail }, true);
+                        }
+                    }
+                }                   
+            }
+            
+            parts = myPlainText.split('\n');
+            String firstSentence = parts[0].replaceAll('\t',' ');
+            list<string> firstSentencewords = firstSentence.split(' ');
+            if(linkedcontacts.size() > 0){
+               if(linkedcontacts[0].Approver__r.email == fromAddress || delegateEmail == fromAddress) {
+                   if(linkedcontacts[0].Approval_Status__c != 'Recalled' && linkedcontacts[0].Approval_Status__c != 'Cancelled'){
+                      if(firstSentencewords[0].containsIgnoreCase('approve')) {
+                           linkedcontacts[0].Approval_Status__c = 'Approved';
+                           if(delegateEmail == fromAddress){
+                               linkedcontacts[0].Delegate_Approved__c = true;
+                               if(linkedcontacts[0].Delegate_Approver__c == null){
+                                   linkedcontacts[0].Delegate_Approver__c = linkedcontacts[0].Approver__r.Delegate__c;
+                               }
+                           }
+                           try{
+                               update linkedcontacts[0];
+                           }catch(Exception e){
+                               hException.catchX(e, 'Error updating Linked Contact for Approved Status');
+                           }    
+                      }else if(firstSentencewords[0].containsIgnoreCase('reject')) {
+                          linkedcontacts[0].Approval_Status__c = 'Rejected';
+                          if(delegateEmail == fromAddress){
+                               linkedcontacts[0].Delegate_Approved__c = true;
+                           }
+                           try{
+                              update linkedcontacts[0];
+                           }catch(Exception e){
+                               hException.catchX(e, 'Error updating Linked Contact for Rejected Status');
+                           }   
+                     }
+                  } else{
+                      System.Debug('Rashmi you made uptil here');
+                      EmailTemplate emt;
+                      if(linkedcontacts[0].Approval_Status__c == 'Recalled'){
+                          try{
+                              emt = [select id,Name from EmailTemplate  where Name ='Internal Requisition Recalled'];  
+                          }catch(Exception e){
+                              hException.catchX(e, 'Error updating EmailTemplate');
+                          }    
+                      }
+                      else if(linkedcontacts[0].Approval_Status__c == 'Cancelled'){
+                          try{
+                              emt = [select id,Name from EmailTemplate  where Name ='Internal Requisition Cancelled']; 
+                          }catch(Exception e){
+                               hException.catchX(e, 'Error updating EmailTemplate');
+                          }    
+                      }
+                          Messaging.SingleEmailMessage mail = new Messaging.SingleEmailMessage();
+                           if(delegateEmail == fromAddress){
+                               mail.setTargetObjectId(linkedcontacts[0].Delegate_Approver__c);
+                           }
+                           else{
+                               mail.setTargetObjectId(linkedcontacts[0].Approver__c);
+                           }
+                           mail.setTemplateId(emt.id);
+                           mail.setWhatId(linkedcontacts[0].Internal_Request__c);   
+                           mail.setBccSender(false);
+                           mail.setUseSignature(false);
+                           mail.setSenderDisplayName('Internal Request');
+                           mail.setSaveAsActivity(false); 
+                           Messaging.sendEmail(new Messaging.SingleEmailMessage[] { mail }, true);
+                  }
+              }
+           }                  
+        }
+        catch(Exception e) {
+            hException.catchX(e, 'Contact ID is missing');
+        }                 
+        result.success = true;
+        return result;
+    }
+}

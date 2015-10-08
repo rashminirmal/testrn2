@@ -1,0 +1,37 @@
+/* 
+Created by:  RASHMI NIRMAL
+Manager's Name:  KARL DRAHOVSKY
+Created Date:  7/20/2015 (UAT)
+Original Reason: Email helper class to send email to pending approvers
+Modified by                        Modified Date                    Modification-Reason (Note areas this affects, etc.)
+----------------                 -------------------           ---------------------------------------------------------------------
+*/
+Global class IRemailRecallHelper {
+
+public static void sendEmailIR(ID approver, ID trial, String purpose) {
+     Messaging.SingleEmailMessage mail = new Messaging.SingleEmailMessage();
+     String[] ccAddresses = new String[] {'ba.team@arris.com'};
+     EmailTemplate emt;
+     try{
+         if(purpose == 'Recalled'){
+            emt = [select id,Name from EmailTemplate  where Name ='Internal Requisition Recalled'];  
+         }   
+         else if(purpose == 'Cancelled'){
+             emt = [select id,Name from EmailTemplate  where Name ='Internal Requisition Cancelled']; 
+         }
+     }catch(Exception e){
+             hexception.catchX(e,'Error getting email template for Cancelled IR'); 
+     }      
+    // Who you are sending the email to
+         mail.setTargetObjectId(approver);
+         mail.setTemplateId(emt.id);
+         mail.setWhatId(trial);   
+         mail.setBccSender(false);
+         mail.setCcAddresses(ccAddresses);
+         mail.setUseSignature(false);
+         mail.setSenderDisplayName('Internal Request');
+         mail.setSaveAsActivity(false); 
+         Messaging.sendEmail(new Messaging.SingleEmailMessage[] { mail }, false);
+  } 
+
+}
